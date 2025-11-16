@@ -1,9 +1,7 @@
 import os
-import traceback
 from datetime import datetime
-from flask import Flask, request, redirect, session, url_for, send_from_directory
+from flask import Flask, request, redirect, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
@@ -30,39 +28,19 @@ app.config['MAIL_DEFAULT_SENDER'] = ("Team Workspace", os.getenv("MAIL_USERNAME"
 
 mail = Mail(app)
 db = SQLAlchemy(app)
-socketio = SocketIO(app, async_mode="eventlet")
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 # ----------------------------------------------------
-# STYLE (UI + SweetAlert)
+# STYLE
 # ----------------------------------------------------
 STYLE = """
-<link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
-<script src='https://cdn.jsdelivr.net/npm/sweetalert2@11'></script>
-<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
 <style>
-body { font-family: Arial; background: #f0f0f0; padding: 30px; }
-.container { background: white; padding: 25px; border-radius: 12px; max-width: 900px; margin: auto; }
-button { padding: 10px 20px; background: black; color: white; border-radius: 8px; border: none; cursor: pointer; }
+body { font-family: Arial; padding: 30px; background: #f0f0f0; margin: 0; }
+.container { background: white; padding: 25px; border-radius: 10px; max-width: 900px; margin: auto; }
+button { padding: 10px 20px; background: black; color: white; border: none; border-radius: 8px; cursor: pointer; }
 .small { padding: 6px 14px; }
 </style>
-<script>
-var socket = io();
-window.currentProjectId = null;
-
-socket.on('project_completed', function(data) {
-  Swal.fire({
-    icon: 'success',
-    title: 'Project Completed 🎉',
-    text: data.name + " has been completed!"
-  }).then(() => {
-    if (window.currentProjectId == data.pid) {
-      window.location = "/project_completed/" + data.pid;
-    }
-  });
-});
-</script>
 """
 
 # ----------------------------------------------------
@@ -96,23 +74,16 @@ class Upload(db.Model):
     uploaded_time = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ----------------------------------------------------
-# EMAIL HELPER
+# EMAIL SENDER
 # ----------------------------------------------------
 def send_email_to_all(subject, body):
     try:
-        users = User.query.all()
-        emails = [u.email for u in users if u.email]
-
+        emails = [u.email for u in User.query.all() if u.email]
         if not emails:
-            return False
-
-        msg = Message(subject=subject, recipients=emails, body=body)
-        mail.send(msg)
-        return True
-
-    except Exception:
-        traceback.print_exc()
-        return False
+            return
+        mail.send(Message(subject=subject, recipients=emails, body=body))
+    except:
+        pass
 
 # ----------------------------------------------------
 # ROUTES
@@ -125,13 +96,19 @@ def home():
         <a href='/login'><button class='small'>Login</button></a>
         <a href='/register'><button class='small'>Register</button></a>
     </div>
-"""
+    """
+
+@app.route("/init_db")
+def init_db():
+    with app.app_context():
+        db.create_all()
+    return "Database initialized!"
 
 @app.route("/register", methods=["GET","POST"])
 def register():
     if request.method == "POST":
-        name = request.form["name"].strip()
-        email = request.form["email"].lower().strip()
+        name = request.form["name"]
+        email = request.form["email"].lower()
         pwd = request.form["password"]
 
         if User.query.filter_by(email=email).first():
@@ -143,26 +120,26 @@ def register():
 
     return STYLE + """
     <div class='container'>
-        <h2>Register</h2>
-        <form method='POST'>
-            <label>Name</label><input name='name'>
-            <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
-            <button>Register</button>
-        </form>
-        <a href='/login'><button class='small'>Login</button></a>
+      <h2>Register</h2>
+      <form method='POST'>
+        <label>Name</label><input name='name'>
+        <label>Email</label><input name='email'>
+        <label>Password</label><input type='password' name='password'>
+        <button>Register</button>
+      </form>
+      <a href='/login'><button class='small'>Login</button></a>
     </div>
-"""
+    """
 
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"].lower().strip()
+        email = request.form["email"].lower()
         pwd = request.form["password"]
         user = User.query.filter_by(email=email).first()
 
         if not user or user.password != pwd:
-            return STYLE + "<h3>Invalid Login</h3>"
+            return STYLE + "<h3>Invalid login</h3>"
 
         session["user_id"] = user.id
         session["user_name"] = user.name
@@ -170,14 +147,14 @@ def login():
 
     return STYLE + """
     <div class='container'>
-        <h2>Login</h2>
-        <form method='POST'>
-            <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
-            <button>Login</button>
-        </form>
+      <h2>Login</h2>
+      <form method='POST'>
+        <label>Email</label><input name='email'>
+        <label>Password</label><input type='password' name='password'>
+        <button>Login</button>
+      </form>
     </div>
-"""
+    """
 
 @app.route("/logout")
 def logout():
@@ -190,25 +167,25 @@ def dashboard():
         return redirect("/login")
 
     projects = Project.query.all()
-    project_list = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
+    items = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
 
     return STYLE + f"""
     <div class='container'>
-        <h2>Welcome {session['user_name']}</h2>
+      <h2>Welcome {session['user_name']}</h2>
 
-        <h3>Create New Project</h3>
-        <form method='POST' action='/create_project'>
-            <label>Name</label><input name='name'>
-            <label>Weeks</label><input type='number' name='weeks'>
-            <button>Create</button>
-        </form>
+      <h3>Create Project</h3>
+      <form method='POST' action='/create_project'>
+        <label>Name</label><input name='name'>
+        <label>Weeks</label><input type='number' name='weeks'>
+        <button>Create</button>
+      </form>
 
-        <h3>Your Projects</h3>
-        <ul>{project_list}</ul>
+      <h3>Your Projects</h3>
+      <ul>{items}</ul>
 
-        <a href='/logout'><button class='small'>Logout</button></a>
+      <a href='/logout'><button class='small'>Logout</button></a>
     </div>
-"""
+    """
 
 @app.route("/create_project", methods=["POST"])
 def create_project():
@@ -221,8 +198,8 @@ def create_project():
 
     for w in range(1, weeks + 1):
         db.session.add(ProjectWeek(project_id=p.id, week_number=w))
-
     db.session.commit()
+
     return redirect("/dashboard")
 
 @app.route("/project/<int:pid>")
@@ -231,15 +208,13 @@ def project_page(pid):
         return redirect("/login")
 
     p = Project.query.get(pid)
-
     return STYLE + f"""
-    <script>window.currentProjectId = {pid};</script>
     <div class='container'>
       <h2>{p.name}</h2>
       <h3>Week {p.current_week}/{p.weeks}</h3>
       <a href='/dashboard'><button class='small'>Back</button></a>
     </div>
-"""
+    """
 
 @app.route("/project_completed/<int:pid>")
 def completed(pid):
@@ -250,9 +225,12 @@ def completed(pid):
       <h3>{p.name} is done!</h3>
       <a href='/dashboard'><button class='small'>Back</button></a>
     </div>
-"""
+    """
 
 # ----------------------------------------------------
-# NO socketio.run() HERE
-# Render will start the app using gunicorn
+# LOCAL RUN
 # ----------------------------------------------------
+if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()
+    app.run(host="0.0.0.0", port=5000)
