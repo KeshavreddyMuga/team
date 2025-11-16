@@ -1,13 +1,14 @@
 import os
 import traceback
 from datetime import datetime
-from flask import Flask, request, redirect, session, send_from_directory
+from dotenv import load_dotenv
+from flask import Flask, request, redirect, session, send_from_directory, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 from flask_mail import Mail, Message
-from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
 # ----------------------------------------------------
@@ -28,9 +29,7 @@ app.config['MAIL_USERNAME'] = os.getenv("MAIL_USERNAME")
 app.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD")
 app.config['MAIL_DEFAULT_SENDER'] = ("Team Workspace", os.getenv("MAIL_USERNAME"))
 
-mail = Mail()
-mail.init_app(app)
-
+mail = Mail(app)
 db = SQLAlchemy(app)
 socketio = SocketIO(app, async_mode="threading")
 
@@ -67,7 +66,7 @@ class Upload(db.Model):
     uploaded_time = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ----------------------------------------------------
-# CREATE TABLES MANUALLY - IMPORTANT (Render needs this)
+# INIT DB (required for Render)
 # ----------------------------------------------------
 @app.route("/init_db")
 def init_db():
@@ -85,7 +84,7 @@ def send_email_to_all(subject, body):
             return
         msg = Message(subject=subject, recipients=emails, body=body)
         mail.send(msg)
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
 
 # ----------------------------------------------------
@@ -116,9 +115,9 @@ def register():
     return """
     <h3>Register</h3>
     <form method='POST'>
-        <input name='name'>
-        <input name='email'>
-        <input type='password' name='password'>
+        <input name='name' placeholder="Name">
+        <input name='email' placeholder="Email">
+        <input type='password' name='password' placeholder="Password">
         <button>Register</button>
     </form>
     """
@@ -140,8 +139,8 @@ def login():
     return """
     <h3>Login</h3>
     <form method='POST'>
-        <input name='email'>
-        <input type='password' name='password'>
+        <input name='email' placeholder="Email">
+        <input type='password' name='password' placeholder="Password">
         <button>Login</button>
     </form>
     """
@@ -162,8 +161,8 @@ def dashboard():
     return f"""
     <h2>Welcome {session['user_name']}</h2>
     <form method='POST' action='/create_project'>
-        <input name='name'>
-        <input name='weeks'>
+        <input name='name' placeholder='Project Name'>
+        <input name='weeks' placeholder='Weeks'>
         <button>Create Project</button>
     </form>
     <h3>Your Projects</h3>
@@ -198,7 +197,7 @@ def project_page(pid):
     """
 
 # ----------------------------------------------------
-# RUN ON RENDER
+# RUN ON RENDER (IMPORTANT)
 # ----------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
