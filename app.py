@@ -1,7 +1,7 @@
 import os
 import traceback
 from datetime import datetime
-from flask import Flask, request, redirect, session, url_for, send_from_directory
+from flask import Flask, request, redirect, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
@@ -32,18 +32,9 @@ mail = Mail()
 mail.init_app(app)
 
 db = SQLAlchemy(app)
-socketio = SocketIO(app, async_mode="eventlet")
+socketio = SocketIO(app, async_mode="threading")
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-
-# ----------------------------------------------------
-# STYLE + CLIENT SOCKET.IO + SWEETALERT
-# ----------------------------------------------------
-STYLE = """
-<link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
-<script src='https://cdn.jsdelivr.net/npm/sweetalert2@11'></script>
-<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
-"""
 
 # ----------------------------------------------------
 # DATABASE MODELS
@@ -76,6 +67,15 @@ class Upload(db.Model):
     uploaded_time = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ----------------------------------------------------
+# CREATE TABLES MANUALLY - IMPORTANT (Render needs this)
+# ----------------------------------------------------
+@app.route("/init_db")
+def init_db():
+    with app.app_context():
+        db.create_all()
+    return "Database initialized!"
+
+# ----------------------------------------------------
 # EMAIL SENDER
 # ----------------------------------------------------
 def send_email_to_all(subject, body):
@@ -93,15 +93,12 @@ def send_email_to_all(subject, body):
 # ----------------------------------------------------
 @app.route("/")
 def home():
-    return STYLE + """
-    <div style='padding:20px'>
-        <h2>Team Workspace Organizer</h2>
-        <a href='/login'><button>Login</button></a>
-        <a href='/register'><button>Register</button></a>
-    </div>
+    return """
+    <h2>Team Workspace</h2>
+    <a href='/login'>Login</a> |
+    <a href='/register'>Register</a>
     """
 
-# ---------------- REGISTER -------------------------
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
@@ -110,27 +107,22 @@ def register():
         pwd = request.form["password"]
 
         if User.query.filter_by(email=email).first():
-            return STYLE + "<h3>Email already exists</h3>"
+            return "Email already exists"
 
         db.session.add(User(name=name, email=email, password=pwd))
         db.session.commit()
         return redirect("/login")
 
-    return STYLE + """
-    <div style='padding:20px'>
-      <h2>Register</h2>
-      <form method='POST'>
-        <input name='name' placeholder='Name'><br><br>
-        <input name='email' placeholder='Email'><br><br>
-        <input type='password' name='password' placeholder='Password'><br><br>
+    return """
+    <h3>Register</h3>
+    <form method='POST'>
+        <input name='name'>
+        <input name='email'>
+        <input type='password' name='password'>
         <button>Register</button>
-      </form>
-      <br>
-      <a href='/login'><button>Login</button></a>
-    </div>
+    </form>
     """
 
-# ---------------- LOGIN -------------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -139,23 +131,19 @@ def login():
 
         user = User.query.filter_by(email=email).first()
         if not user or user.password != pwd:
-            return STYLE + "<h3>Invalid login</h3>"
+            return "Invalid login"
 
         session["user_id"] = user.id
         session["user_name"] = user.name
         return redirect("/dashboard")
 
-    return STYLE + """
-    <div style='padding:20px'>
-      <h2>Login</h2>
-      <form method='POST'>
-        <input name='email' placeholder='Email'><br><br>
-        <input type='password' name='password' placeholder='Password'><br><br>
+    return """
+    <h3>Login</h3>
+    <form method='POST'>
+        <input name='email'>
+        <input type='password' name='password'>
         <button>Login</button>
-      </form>
-      <br>
-      <a href='/register'><button>Register</button></a>
-    </div>
+    </form>
     """
 
 @app.route("/logout")
@@ -163,34 +151,25 @@ def logout():
     session.clear()
     return redirect("/")
 
-# ---------------- DASHBOARD -------------------------
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
 
     projects = Project.query.all()
-    proj_list = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
+    list_html = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
 
-    return STYLE + f"""
-    <div style='padding:20px'>
-      <h2>Welcome {session['user_name']}</h2>
-
-      <h3>Create Project</h3>
-      <form method='POST' action='/create_project'>
-        <input name='name' placeholder='Project Name'><br><br>
-        <input name='weeks' type='number' placeholder='No. of weeks'><br><br>
-        <button>Create</button>
-      </form>
-
-      <h3>Your Projects</h3>
-      <ul>{proj_list}</ul>
-
-      <a href='/logout'><button>Logout</button></a>
-    </div>
+    return f"""
+    <h2>Welcome {session['user_name']}</h2>
+    <form method='POST' action='/create_project'>
+        <input name='name'>
+        <input name='weeks'>
+        <button>Create Project</button>
+    </form>
+    <h3>Your Projects</h3>
+    <ul>{list_html}</ul>
     """
 
-# ---------------- CREATE PROJECT -------------------------
 @app.route("/create_project", methods=["POST"])
 def create_project():
     name = request.form["name"]
@@ -200,42 +179,27 @@ def create_project():
     db.session.add(p)
     db.session.commit()
 
-    for w in range(1, weeks + 1):
-        db.session.add(ProjectWeek(project_id=p.id, week_number=w))
+    for i in range(1, weeks + 1):
+        db.session.add(ProjectWeek(project_id=p.id, week_number=i))
     db.session.commit()
 
     return redirect("/dashboard")
 
-# ---------------- PROJECT PAGE -------------------------
 @app.route("/project/<int:pid>")
 def project_page(pid):
     if "user_id" not in session:
         return redirect("/login")
 
     p = Project.query.get(pid)
-    return STYLE + f"""
-    <div style='padding:20px'>
-        <h2>{p.name}</h2>
-        <h3>Week {p.current_week}/{p.weeks}</h3>
-        <a href='/dashboard'><button>Back</button></a>
-    </div>
+    return f"""
+    <h2>{p.name}</h2>
+    <h4>Week {p.current_week}/{p.weeks}</h4>
+    <a href='/dashboard'>Back</a>
     """
 
 # ----------------------------------------------------
-# MANUAL DATABASE INITIALIZER (use once)
-# ----------------------------------------------------
-@app.route("/init_db")
-def init_db():
-    with app.app_context():
-        db.create_all()
-    return "Database initialized!"
-
-# ----------------------------------------------------
-# RUN
+# RUN ON RENDER
 # ----------------------------------------------------
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-
     port = int(os.getenv("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
