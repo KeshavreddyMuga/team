@@ -1,7 +1,9 @@
 import os
+import traceback
 from datetime import datetime
-from flask import Flask, request, redirect, session, send_from_directory
+from flask import Flask, request, redirect, session, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
+from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
@@ -26,21 +28,21 @@ app.config['MAIL_USERNAME'] = os.getenv("MAIL_USERNAME")
 app.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD")
 app.config['MAIL_DEFAULT_SENDER'] = ("Team Workspace", os.getenv("MAIL_USERNAME"))
 
-mail = Mail(app)
+mail = Mail()
+mail.init_app(app)
+
 db = SQLAlchemy(app)
+socketio = SocketIO(app, async_mode="eventlet")
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 # ----------------------------------------------------
-# STYLE
+# STYLE + CLIENT SOCKET.IO + SWEETALERT
 # ----------------------------------------------------
 STYLE = """
-<style>
-body { font-family: Arial; padding: 30px; background: #f0f0f0; margin: 0; }
-.container { background: white; padding: 25px; border-radius: 10px; max-width: 900px; margin: auto; }
-button { padding: 10px 20px; background: black; color: white; border: none; border-radius: 8px; cursor: pointer; }
-.small { padding: 6px 14px; }
-</style>
+<link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
+<script src='https://cdn.jsdelivr.net/npm/sweetalert2@11'></script>
+<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
 """
 
 # ----------------------------------------------------
@@ -81,9 +83,10 @@ def send_email_to_all(subject, body):
         emails = [u.email for u in User.query.all() if u.email]
         if not emails:
             return
-        mail.send(Message(subject=subject, recipients=emails, body=body))
-    except:
-        pass
+        msg = Message(subject=subject, recipients=emails, body=body)
+        mail.send(msg)
+    except Exception:
+        traceback.print_exc()
 
 # ----------------------------------------------------
 # ROUTES
@@ -91,24 +94,19 @@ def send_email_to_all(subject, body):
 @app.route("/")
 def home():
     return STYLE + """
-    <div class='container'>
+    <div style='padding:20px'>
         <h2>Team Workspace Organizer</h2>
-        <a href='/login'><button class='small'>Login</button></a>
-        <a href='/register'><button class='small'>Register</button></a>
+        <a href='/login'><button>Login</button></a>
+        <a href='/register'><button>Register</button></a>
     </div>
     """
 
-@app.route("/init_db")
-def init_db():
-    with app.app_context():
-        db.create_all()
-    return "Database initialized!"
-
-@app.route("/register", methods=["GET","POST"])
+# ---------------- REGISTER -------------------------
+@app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
         name = request.form["name"]
-        email = request.form["email"].lower()
+        email = request.form["email"]
         pwd = request.form["password"]
 
         if User.query.filter_by(email=email).first():
@@ -119,25 +117,27 @@ def register():
         return redirect("/login")
 
     return STYLE + """
-    <div class='container'>
+    <div style='padding:20px'>
       <h2>Register</h2>
       <form method='POST'>
-        <label>Name</label><input name='name'>
-        <label>Email</label><input name='email'>
-        <label>Password</label><input type='password' name='password'>
+        <input name='name' placeholder='Name'><br><br>
+        <input name='email' placeholder='Email'><br><br>
+        <input type='password' name='password' placeholder='Password'><br><br>
         <button>Register</button>
       </form>
-      <a href='/login'><button class='small'>Login</button></a>
+      <br>
+      <a href='/login'><button>Login</button></a>
     </div>
     """
 
-@app.route("/login", methods=["GET","POST"])
+# ---------------- LOGIN -------------------------
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"].lower()
+        email = request.form["email"]
         pwd = request.form["password"]
-        user = User.query.filter_by(email=email).first()
 
+        user = User.query.filter_by(email=email).first()
         if not user or user.password != pwd:
             return STYLE + "<h3>Invalid login</h3>"
 
@@ -146,13 +146,15 @@ def login():
         return redirect("/dashboard")
 
     return STYLE + """
-    <div class='container'>
+    <div style='padding:20px'>
       <h2>Login</h2>
       <form method='POST'>
-        <label>Email</label><input name='email'>
-        <label>Password</label><input type='password' name='password'>
+        <input name='email' placeholder='Email'><br><br>
+        <input type='password' name='password' placeholder='Password'><br><br>
         <button>Login</button>
       </form>
+      <br>
+      <a href='/register'><button>Register</button></a>
     </div>
     """
 
@@ -161,32 +163,34 @@ def logout():
     session.clear()
     return redirect("/")
 
+# ---------------- DASHBOARD -------------------------
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
 
     projects = Project.query.all()
-    items = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
+    proj_list = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
 
     return STYLE + f"""
-    <div class='container'>
+    <div style='padding:20px'>
       <h2>Welcome {session['user_name']}</h2>
 
       <h3>Create Project</h3>
       <form method='POST' action='/create_project'>
-        <label>Name</label><input name='name'>
-        <label>Weeks</label><input type='number' name='weeks'>
+        <input name='name' placeholder='Project Name'><br><br>
+        <input name='weeks' type='number' placeholder='No. of weeks'><br><br>
         <button>Create</button>
       </form>
 
       <h3>Your Projects</h3>
-      <ul>{items}</ul>
+      <ul>{proj_list}</ul>
 
-      <a href='/logout'><button class='small'>Logout</button></a>
+      <a href='/logout'><button>Logout</button></a>
     </div>
     """
 
+# ---------------- CREATE PROJECT -------------------------
 @app.route("/create_project", methods=["POST"])
 def create_project():
     name = request.form["name"]
@@ -202,6 +206,7 @@ def create_project():
 
     return redirect("/dashboard")
 
+# ---------------- PROJECT PAGE -------------------------
 @app.route("/project/<int:pid>")
 def project_page(pid):
     if "user_id" not in session:
@@ -209,28 +214,28 @@ def project_page(pid):
 
     p = Project.query.get(pid)
     return STYLE + f"""
-    <div class='container'>
-      <h2>{p.name}</h2>
-      <h3>Week {p.current_week}/{p.weeks}</h3>
-      <a href='/dashboard'><button class='small'>Back</button></a>
-    </div>
-    """
-
-@app.route("/project_completed/<int:pid>")
-def completed(pid):
-    p = Project.query.get(pid)
-    return STYLE + f"""
-    <div class='container'>
-      <h2>🎉 Project Completed</h2>
-      <h3>{p.name} is done!</h3>
-      <a href='/dashboard'><button class='small'>Back</button></a>
+    <div style='padding:20px'>
+        <h2>{p.name}</h2>
+        <h3>Week {p.current_week}/{p.weeks}</h3>
+        <a href='/dashboard'><button>Back</button></a>
     </div>
     """
 
 # ----------------------------------------------------
-# LOCAL RUN
+# MANUAL DATABASE INITIALIZER (use once)
+# ----------------------------------------------------
+@app.route("/init_db")
+def init_db():
+    with app.app_context():
+        db.create_all()
+    return "Database initialized!"
+
+# ----------------------------------------------------
+# RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(host="0.0.0.0", port=5000)
+
+    port = int(os.getenv("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port)
